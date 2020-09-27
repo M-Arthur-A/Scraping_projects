@@ -4,7 +4,6 @@ from getdata import settings
 from getdata.spiders.efrsb import EfrsbSpider
 import shutil
 import os
-import schedule
 import time
 
 
