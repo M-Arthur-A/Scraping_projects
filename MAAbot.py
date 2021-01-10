@@ -19,15 +19,11 @@ from aiogram.types import ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButt
     InlineKeyboardButton, InputMediaPhoto, ParseMode
 from aiogram.utils.markdown import text, bold, italic, code, pre
 import random
-
-
+import pyowm
+from pyowm.commons.enums import SubscriptionTypeEnum
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-
-# Initialize bot and dispatcher
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
 
 client = MongoClient('localhost', 27017)  # подключение к машине
 mongo_base = client.db
@@ -159,6 +155,28 @@ shares = []
 news = ['/Экономика_вся', '/Финансы_все']  # '/Экономика_ТОП10', '/Финансы_ТОП10'
 news_data = []
 
+config = {
+    'subscription_type': SubscriptionTypeEnum.FREE,
+    'language': 'ru',
+    'connection': {
+        'use_ssl': True,
+        'verify_ssl_certs': True,
+        'use_proxy': False,
+        'timeout_secs': 5
+    },
+    'proxies': {
+        'http': 'http://user:pass@host:port',
+        'https': 'socks5://user:pass@host:port'
+    }
+}
+with open('!ADDS/req') as f:
+    f = f.readlines()[0].split()
+owm = pyowm.OWM(f[1], config=config)
+
+# Initialize bot and dispatcher
+bot = Bot(token=f[0])
+dp = Dispatcher(bot)
+
 
 # @dp.message_handler(commands='start')
 @dp.message_handler(commands='start')
@@ -175,6 +193,7 @@ async def start_cmd_handler(message: types.Message, btns=0):
                          ('Акции', 'shares'),
                          ('Гособлигации', 'bonds'),
                          ('Новости', 'news'),
+                         ('Погода', 'weather'),
                          ('Монетка', 'dice'))
     else:
         text_and_data = btns
@@ -195,6 +214,7 @@ async def start_cmd_handler(message: types.Message, btns=0):
 @dp.callback_query_handler(text='bonds')
 @dp.callback_query_handler(text='news')
 @dp.callback_query_handler(text='dice')
+@dp.callback_query_handler(text='weather')
 async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
     answer_data = query.data
     # always answer callback queries, even if you have nothing to say
@@ -241,7 +261,7 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
         collection = collections[7]
         global shares
         shares = collection.distinct('stocks_ticker')
-        shares = list(map(lambda x: '/t_'+str(x), shares))
+        shares = list(map(lambda x: '/t_' + str(x), shares))
         await bot.send_message(query.from_user.id, text)
 
     elif answer_data == 'bonds':
@@ -257,6 +277,10 @@ async def inline_kb_answer_callback_handler(query: types.CallbackQuery):
             choice_kb.add(KeyboardButton(new))
         text = 'Какие новости Вас интересуют?'
         await bot.send_message(query.from_user.id, text, reply_markup=choice_kb)
+
+    elif answer_data == 'weather':
+        text = 'Введите интересующий Вас город (в конце поставте *)!\nНапример, Москва*'
+        await bot.send_message(query.from_user.id, text)
 
     elif answer_data == 'dice':
         text = 'Орёл! (Да)' if random.randint(0, 1) else 'Решка! (Нет)'
@@ -315,7 +339,6 @@ async def process_start_command(message: types.Message):
         header = ['Курс', 'Цена', 'День', 'Мес', 'Год', 'Акт.']
         body = [query['cur_name'], query['cur_price'], query['cur_delta_day'], query['cur_delta_month'],
                 query['cur_delta_year'], query['cur_data_date']]
-        text = ''
         text = tabletext(body, header, 'small')
         await message.reply('<code>' + text + '</code>', parse_mode='HTML')
 
@@ -325,7 +348,6 @@ async def process_start_command(message: types.Message):
         body = [query['commodities_name'], query['commodities_price'], query['commodities_delta_day'],
                 query['commodities_delta_month'],
                 query['commodities_delta_year'], query['commodities_data_date']]
-        text = ''
         text = tabletext(body, header, 'small')
         await message.reply('<code>' + text + '</code>', parse_mode='HTML')
 
@@ -361,7 +383,6 @@ async def process_start_command(message: types.Message):
         header = ['ЦБ', 'Цена', 'День', 'Мес', 'Год', 'Акт.']
         body = [query['bonds_name'], query['bonds_price'], query['bonds_delta_day'], query['bonds_delta_month'],
                 query['bonds_delta_year'], query['bonds_data_date']]
-        text = ''
         text = tabletext(body, header, 'small')
         await message.reply('<code>' + text + '</code>', parse_mode='HTML')
 
@@ -383,8 +404,37 @@ async def process_start_command(message: types.Message):
         header = ['Тикер', 'Имя', 'Цена', 'День', 'Год', 'Акт.']
         body = [query['stocks_ticker'], query['stocks_name'], query['stocks_price'], query['stocks_delta_day'],
                 query['stocks_delta_year'], query['stocks_data_date']]
-        text = ''
         text = tabletext(body, header, 'small')
+        await message.reply('<code>' + text + '</code>', parse_mode='HTML')
+
+    if '*' in message.text:
+        mes = message.text.split('*')[0]
+        mgr = owm.weather_manager()
+        try:
+            observation = mgr.weather_at_place(mes)
+        except:
+            await bot.send_message(query.from_user.id, 'Такого города нет!')
+            return None
+        w = observation.weather
+        temp = w.temperature('celsius')["temp"]
+        text = "В городе " + mes + " сейчас " + w.detailed_status + '.\n'
+        text += "Температура: " + str(temp) + "\n\n"
+        if temp > 30:
+            text += "Жара! Не забывайте пить больше воды!"
+        elif 30 >= temp > 20:
+            text += "Погода что надо! Получайте удовольствие - надевайте плавки!"
+        elif 20 >= temp > 10:
+            text += "На улице свежо, не забудьте накинуть пальто!"
+        elif 10 >= temp > 0:
+            text += "Погода прохладная, не забудьте шапку!"
+        elif 0 >= temp > -10:
+            text += "Погода морозная. Даставайте штаны с начёсом!"
+        elif -10 >= temp > -20:
+            text += "На улице ппц холодрыга! Надевайте трусы с начосом!"
+        elif -20 >= temp > -30:
+            text += "Лютый мороз, надевайте всё, что есть!"
+        else:
+            text += "Хозяин собаку на двор не выгонет, а вы куда собрались?"
         await message.reply('<code>' + text + '</code>', parse_mode='HTML')
 
 
